@@ -1,5 +1,6 @@
 {
   "BindAddress": ":53",
+  "DebugHTTPAddress": "127.0.0.1:5555",
   "PrimaryDNS": [
     {
       "Name": "DNSPod",
@@ -9,7 +10,8 @@
       "Timeout": 6,
       "EDNSClientSubnet": {
         "Policy": "disable",
-        "ExternalIP": ""
+        "ExternalIP": "",
+        "NoCookie": true
       }
     }
   ],
@@ -22,17 +24,26 @@
       "Timeout": 6,
       "EDNSClientSubnet": {
         "Policy": "disable",
-        "ExternalIP": ""
+        "ExternalIP": "",
+        "NoCookie": true
       }
     }
   ],
   "OnlyPrimaryDNS": false,
-  "RedirectIPv6Record": false,
-  "IPNetworkFile": "./ip_network_sample",
-  "DomainFile": "./domain_sample",
-  "DomainBase64Decode": true,
+  "IPv6UseAlternativeDNS": false,
+  "WhenPrimaryDNSAnswerNoneUse": "PrimaryDNS",
+  "IPNetworkFile": {
+    "Primary": "./ip_network_primary_sample",
+    "Alternative": "./ip_network_alternative_sample"
+  },
+  "DomainFile": {
+    "Primary": "./domain_primary_sample",
+    "Alternative": "./domain_alternative_sample",
+    "Matcher":  "regex-list"
+  },
   "HostsFile": "./hosts_sample",
   "MinimumTTL": 0,
+  "DomainTTLFile" : "./domain_ttl_sample",
   "CacheSize" : 0,
-  "RejectQtype": [255]
+  "RejectQType": [255]
 }

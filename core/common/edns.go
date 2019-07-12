@@ -9,9 +9,10 @@ import (
 type EDNSClientSubnetType struct {
 	Policy     string
 	ExternalIP string
+	NoCookie   bool
 }
 
-func SetEDNSClientSubnet(m *dns.Msg, ip string) {
+func SetEDNSClientSubnet(m *dns.Msg, ip string, isNoCookie bool) {
 
 	if ip == "" {
 		return
@@ -20,6 +21,7 @@ func SetEDNSClientSubnet(m *dns.Msg, ip string) {
 	o := m.IsEdns0()
 	if o == nil {
 		o = new(dns.OPT)
+		o.SetUDPSize(4096)
 		o.Hdr.Name = "."
 		o.Hdr.Rrtype = dns.TypeOPT
 		m.Extra = append(m.Extra, o)
@@ -39,6 +41,19 @@ func SetEDNSClientSubnet(m *dns.Msg, ip string) {
 		}
 		es.SourceScope = 0
 		o.Option = append(o.Option, es)
+		if isNoCookie {
+			deleteCookie(o)
+		}
+	}
+}
+
+func deleteCookie(o *dns.OPT) {
+
+	for i, e0 := range o.Option {
+		switch e0.(type) {
+		case *dns.EDNS0_COOKIE:
+			o.Option = append(o.Option[:i], o.Option[i+1:]...)
+		}
 	}
 }
 

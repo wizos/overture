@@ -6,39 +6,57 @@ package config
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/json"
+
+	"github.com/shawn1m/overture/core/matcher"
+	"github.com/shawn1m/overture/core/matcher/full"
+	"github.com/shawn1m/overture/core/matcher/regex"
+	"github.com/shawn1m/overture/core/matcher/suffix"
+	"github.com/shawn1m/overture/core/matcher/mix"
+
 	"io/ioutil"
 	"net"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/shawn1m/overture/core/cache"
 	"github.com/shawn1m/overture/core/common"
 	"github.com/shawn1m/overture/core/hosts"
 )
 
 type Config struct {
-	BindAddress        string `json:"BindAddress"`
-	PrimaryDNS         []*common.DNSUpstream
-	AlternativeDNS     []*common.DNSUpstream
-	OnlyPrimaryDNS     bool
-	RedirectIPv6Record bool
-	IPNetworkFile      string
-	DomainFile         string
-	DomainBase64Decode bool
-	HostsFile          string
-	MinimumTTL         int
-	CacheSize          int
-	RejectQtype        []uint16
+	BindAddress           string `json:"BindAddress"`
+	DebugHTTPAddress      string `json:"DebugHTTPAddress"`
+	PrimaryDNS            []*common.DNSUpstream
+	AlternativeDNS        []*common.DNSUpstream
+	OnlyPrimaryDNS        bool
+	IPv6UseAlternativeDNS bool
+	IPNetworkFile         struct {
+		Primary     string
+		Alternative string
+	}
+	DomainFile struct {
+		Primary     string
+		Alternative string
+		Matcher     string
+	}
+	HostsFile     string
+	MinimumTTL    int
+	DomainTTLFile string
+	CacheSize     int
+	RejectQType   []uint16
 
-	DomainList    []string
-	IPNetworkList []*net.IPNet
-	Hosts         *hosts.Hosts
-	Cache         *cache.Cache
+	DomainTTLMap                map[string]uint32
+	DomainPrimaryList           matcher.Matcher
+	DomainAlternativeList       matcher.Matcher
+	WhenPrimaryDNSAnswerNoneUse string
+	IPNetworkPrimaryList        []*net.IPNet
+	IPNetworkAlternativeList    []*net.IPNet
+	Hosts                       *hosts.Hosts
+	Cache                       *cache.Cache
 }
 
 // New config with json file and do some other initiate works
@@ -46,8 +64,13 @@ func NewConfig(configFile string) *Config {
 
 	config := parseJson(configFile)
 
-	config.getIPNetworkList()
-	config.getDomainList()
+	config.DomainTTLMap = getDomainTTLMap(config.DomainTTLFile)
+
+	config.DomainPrimaryList = initDomainMatcher(config.DomainFile.Primary, config.DomainFile.Matcher)
+	config.DomainAlternativeList = initDomainMatcher(config.DomainFile.Alternative, config.DomainFile.Matcher)
+
+	config.IPNetworkPrimaryList = getIPNetworkList(config.IPNetworkFile.Primary)
+	config.IPNetworkAlternativeList = getIPNetworkList(config.IPNetworkFile.Alternative)
 
 	if config.MinimumTTL > 0 {
 		log.Info("Minimum TTL is " + strconv.Itoa(config.MinimumTTL))
@@ -98,44 +121,106 @@ func parseJson(path string) *Config {
 	return j
 }
 
-func (c *Config) getDomainList() {
+func getDomainTTLMap(file string) map[string]uint32 {
 
-	var dl []string
-	f, err := ioutil.ReadFile(c.DomainFile)
+	if file == "" {
+		return map[string]uint32{}
+	}
+
+	f, err := ioutil.ReadFile(file)
 	if err != nil {
-		log.Error("Open Custom domain file failed: ", err)
-		return
+		log.Error("Open file "+file+" failed: ", err)
+		return nil
 	}
 
-	re := regexp.MustCompile(`([\w\-\_]+\.[\w\.\-\_]+)[\/\*]*`)
-	if c.DomainBase64Decode {
-		fd, err := base64.StdEncoding.DecodeString(string(f))
-		if err != nil {
-			log.Error("Decode Custom domain failed: ", err)
-			return
+	lines := 0
+	s := string(f)
+	dtl := map[string]uint32{}
+
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
-		fds := string(fd)
-		n := strings.Index(fds, "Whitelist Start")
-		dl = re.FindAllString(fds[:n], -1)
-	} else {
-		dl = re.FindAllString(string(f), -1)
+		words := strings.Fields(line)
+		tempInt64, err := strconv.ParseUint(words[1], 10, 32)
+		dtl[words[0]] = uint32(tempInt64)
+		if err != nil {
+			log.WithFields(log.Fields{"domain": words[0], "ttl": words[1]}).Warn("This TTL is not a number!")
+		}
+		lines++
 	}
 
-	if len(dl) > 0 {
-		log.Info("Load domain file successful")
+	if len(dtl) > 0 {
+		log.Infof("Load domain TTL "+file+" successful with %d records ", lines)
 	} else {
-		log.Warn("There is no element in domain file")
+		log.Warn("There is no element in domain TTL file")
 	}
-	c.DomainList = dl
+
+	return dtl
 }
 
-func (c *Config) getIPNetworkList() {
+func getDomainMatcher(name string) (m matcher.Matcher) {
+
+	switch name {
+	case "suffix-tree":
+		return suffix.DefaultDomainTree()
+	case "full-map":
+		return &full.Map{DataMap: make(map[string]struct{}, 100)}
+	case "full-list":
+		return &full.List{DataList: []string{}}
+	case "regex-list":
+		return &regex.List{RegexList: []string{}}
+	case "mix-list":
+		return &mix.List{DataList: make([]mix.Data, 0)}
+	default:
+		log.Warn("There is no such matcher: "+name, ", use regex-list matcher as default")
+		return &regex.List{RegexList: []string{}}
+	}
+}
+
+func initDomainMatcher(file string, name string) (m matcher.Matcher) {
+
+	m = getDomainMatcher(name)
+
+	if file == "" {
+		return
+	}
+
+	f, err := ioutil.ReadFile(file)
+	if err != nil {
+		log.Error("Open file "+file+" failed: ", err)
+		return nil
+	}
+
+	lines := 0
+	s := string(f)
+
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		_ = m.Insert(line)
+		lines++
+	}
+
+	if lines > 0 {
+		log.Infof("Load domain "+file+" successful with %d records ("+m.Name()+")", lines)
+	} else {
+		log.Warn("There is no element in this domain file: " + file)
+	}
+
+	return
+}
+
+func getIPNetworkList(file string) []*net.IPNet {
 
 	ipnl := make([]*net.IPNet, 0)
-	f, err := os.Open(c.IPNetworkFile)
+	f, err := os.Open(file)
 	if err != nil {
 		log.Error("Open IP network file failed: ", err)
-		return
+		return nil
 	}
 	defer f.Close()
 	s := bufio.NewScanner(f)
@@ -146,11 +231,12 @@ func (c *Config) getIPNetworkList() {
 		}
 		ipnl = append(ipnl, ip_net)
 	}
+
 	if len(ipnl) > 0 {
-		log.Info("Load IP network file successful")
+		log.Info("Load " + file + " successful")
 	} else {
-		log.Warn("There is no element in IP network file")
+		log.Warn("There is no element in " + file)
 	}
 
-	c.IPNetworkList = ipnl
+	return ipnl
 }

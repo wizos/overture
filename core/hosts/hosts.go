@@ -13,7 +13,7 @@ import (
 
 // Hosts represents a file containing hosts_sample
 type Hosts struct {
-	hl       *hostsLineList
+	hl       *hostsLines
 	filePath string
 }
 
@@ -31,6 +31,7 @@ func New(path string) (*Hosts, error) {
 	return h, nil
 }
 
+// todo: use finder implementation
 func (h *Hosts) Find(name string) (ipv4List []net.IP, ipv6List []net.IP) {
 	name = strings.TrimSuffix(name, ".")
 	return h.hl.FindHosts(name)

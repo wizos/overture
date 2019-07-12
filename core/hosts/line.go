@@ -9,59 +9,49 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/shawn1m/overture/core/common"
 )
 
 type hostsLine struct {
-	domain   string
-	ip       net.IP
-	ipv6     bool
-	wildcard bool
+	domain string
+	ip     net.IP
+	ipv6   bool
 }
 
-type hostsLineList []*hostsLine
+type hostsLines []*hostsLine
 
-func (h *hostsLine) Equal(he *hostsLine) bool {
-	if h.wildcard != he.wildcard || h.ipv6 != he.ipv6 {
-		return false
-	}
-	if !h.ip.Equal(he.ip) {
-		return false
-	}
-	if h.domain != he.domain {
-		return false
-	}
-	return true
-}
+func newHostsLineList(data []byte) *hostsLines {
 
-func newHostsLineList(data []byte) *hostsLineList {
-
-	ds := string(data)
-	hl := new(hostsLineList)
+	resultLines := new(hostsLines)
 
 	defer log.Debugf("%s took %s", "Load hosts", time.Since(time.Now()))
-	lineList := strings.Split(ds, "\n")
+	lines := strings.Split(string(data), "\n")
 
-	for _, l := range lineList {
+	for _, line := range lines {
 		func(l string) {
 			if h := parseLine(l); h != nil {
-				err := hl.add(h)
+				err := resultLines.add(h)
 				if err != nil {
-					log.Warnf("Bad formatted hostsfile line: %s", err)
+					log.Warnf("Bad formatted hosts file line: %s", err)
 				}
 			}
-		}(l)
+		}(line)
 	}
 
-	return hl
+	return resultLines
 }
 
-func (hl *hostsLineList) FindHosts(name string) (ipv4List []net.IP, ipv6List []net.IP) {
+func (hl *hostsLines) FindHosts(name string) (ipv4List []net.IP, ipv6List []net.IP) {
 
 	for _, h := range *hl {
-		if (h.wildcard == false && h.domain == name) ||
-			(h.wildcard == true && common.HasSubDomain(h.domain, name)) {
+		if common.IsDomainMatchRule(h.domain, name) {
+			log.WithFields(log.Fields{
+				"question": name,
+				"domain":   h.domain,
+				"ip":       h.ip,
+			}).Debug("Matched")
 			if h.ip.To4() != nil {
 				ipv4List = append(ipv4List, h.ip)
 			} else {
@@ -72,13 +62,13 @@ func (hl *hostsLineList) FindHosts(name string) (ipv4List []net.IP, ipv6List []n
 	return
 }
 
-func (hl *hostsLineList) add(h *hostsLine) error {
+func (hl *hostsLines) add(h *hostsLine) error {
 	// Use too much CPU time when hosts file is big
-	//for _, found := range *hl {
-	//	if found.Equal(h) {
-	//		return fmt.Errorf("Duplicate hostname entry for %#v", h)
-	//	}
-	//}
+	// for _, found := range *hl {
+	// 	if found.Equal(h) {
+	// 		return fmt.Errorf("Duplicate hostname entry for %#v", h)
+	// 	}
+	// }
 	*hl = append(*hl, h)
 	return nil
 }
@@ -131,10 +121,5 @@ func parseLine(line string) *hostsLine {
 		return nil
 	}
 
-	isWildcard := false
-	if h[0:2] == "*." {
-		h = h[2:]
-		isWildcard = true
-	}
-	return &hostsLine{h, ip, isIPv6, isWildcard}
+	return &hostsLine{h, ip, isIPv6}
 }

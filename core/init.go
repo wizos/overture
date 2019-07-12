@@ -14,26 +14,28 @@ import (
 // Initiate the server with config file
 func InitServer(configFilePath string) {
 
-	config := config.NewConfig(configFilePath)
+	conf := config.NewConfig(configFilePath)
 
-	// New dispatcher without ClientBundle, ClientBundle must be initiated when server is running
-	d := outbound.Dispatcher{
-		PrimaryDNS:         config.PrimaryDNS,
-		AlternativeDNS:     config.AlternativeDNS,
-		OnlyPrimaryDNS:     config.OnlyPrimaryDNS,
-		IPNetworkList:      config.IPNetworkList,
-		DomainList:         config.DomainList,
-		RedirectIPv6Record: config.RedirectIPv6Record,
-		Hosts:              config.Hosts,
-		Cache:              config.Cache,
+	// New dispatcher without RemoteClientBundle, RemoteClientBundle must be initiated when server is running
+	dispatcher := outbound.Dispatcher{
+		PrimaryDNS:                  conf.PrimaryDNS,
+		AlternativeDNS:              conf.AlternativeDNS,
+		OnlyPrimaryDNS:              conf.OnlyPrimaryDNS,
+		WhenPrimaryDNSAnswerNoneUse: conf.WhenPrimaryDNSAnswerNoneUse,
+		IPNetworkPrimaryList:        conf.IPNetworkPrimaryList,
+		IPNetworkAlternativeList:    conf.IPNetworkAlternativeList,
+		DomainPrimaryList:           conf.DomainPrimaryList,
+		DomainAlternativeList:       conf.DomainAlternativeList,
+
+		RedirectIPv6Record: conf.IPv6UseAlternativeDNS,
+		MinimumTTL:         conf.MinimumTTL,
+		DomainTTLMap:       conf.DomainTTLMap,
+
+		Hosts: conf.Hosts,
+		Cache: conf.Cache,
 	}
 
-	s := &inbound.Server{
-		BindAddress: config.BindAddress,
-		Dispatcher:  d,
-		MinimumTTL:  config.MinimumTTL,
-		RejectQtype: config.RejectQtype,
-	}
+	s := inbound.NewServer(conf.BindAddress, conf.DebugHTTPAddress, dispatcher, conf.RejectQType)
 
 	s.Run()
 }
